@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hue Piano Lights - Selección de grupo</title>
+</head>
+<body>
+  <h2>🎹 Hue Lights + Piano Pedal</h2>
+  <p id="status">Buscando el Hue Bridge...</p>
+  <button id="register" disabled>Pulsa el botón del bridge y haz clic aquí</button>
+  <br /><br />
+  <label for="groupSelect">Selecciona una zona de luces:</label>
+  <select id="groupSelect" disabled></select>
+
+  <script>
+    const cooldownMs = 1000;
+    const transitionMs = 1;
+    const localKey = "huePianoSetup";
+
+    let bridgeIP = null;
+    let username = null;
+    let selectedGroup = null;
+    let lastPedalTrigger = 0;
+    let lastHue = Math.floor(Math.random() * 65535);
+
+    const statusEl = document.getElementById("status");
+    const buttonEl = document.getElementById("register");
+    const groupSelect = document.getElementById("groupSelect");
+
+    const saved = localStorage.getItem(localKey);
+    if (saved) {
+      const data = JSON.parse(saved);
+      bridgeIP = data.ip;
+      username = data.username;
+      selectedGroup = data.group;
+      loadGroups();
+    } else {
+      fetch("https://discovery.meethue.com/")
+        .then(res => res.json())
+        .then(data => {
+          if (data.length > 0) {
+            bridgeIP = data[0].internalipaddress;
+            statusEl.textContent = `Bridge detectado en ${bridgeIP}. Pulsa el botón del bridge y luego este botón.`;
+            buttonEl.disabled = false;
+          } else {
+            statusEl.textContent = "❌ No se encontró ningún Hue Bridge.";
+          }
+        })
+        .catch(() => {
+          statusEl.textContent = "❌ Error buscando el bridge.";
+        });
+    }
+
+    buttonEl.onclick = () => {
+      fetch(`http://${bridgeIP}/api`, {
+        method: "POST",
+        body: JSON.stringify({ devicetype: "piano_hue_app" })
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data[0]?.error) {
+            statusEl.textContent = "❗ Pulsa el botón del bridge e inténtalo de nuevo.";
+          } else if (data[0]?.success) {
+            username = data[0].success.username;
+            statusEl.textContent = "✅ Usuario creado. Cargando grupos...";
+            loadGroups();
+          }
+        })
+        .catch(() => {
+          statusEl.textContent = "❌ Error al registrar el usuario.";
+        });
+    };
+
+    function loadGroups() {
+      fetch(`http://${bridgeIP}/api/${username}/groups`)
+        .then(res => res.json())
+        .then(groups => {
+          groupSelect.innerHTML = "<option value=''>-- Elige una zona --</option>";
+          for (const [id, group] of Object.entries(groups)) {
+            const option = document.createElement("option");
+            const numLights = group.lights?.length || 0;
+            option.value = id;
+            option.textContent = `${group.name} (${numLights} luz${numLights !== 1 ? 'es' : ''})` + (group.type === "Entertainment" ? " 🎬" : "");
+            groupSelect.appendChild(option);
+          }
+          groupSelect.disabled = false;
+          if (selectedGroup) {
+            groupSelect.value = selectedGroup;
+            initMIDI();
+          }
+        })
+        .catch(() => {
+          statusEl.textContent = "❌ Error al cargar grupos.";
+        });
+    }
+
+    groupSelect.onchange = () => {
+      selectedGroup = groupSelect.value;
+      if (selectedGroup) {
+        localStorage.setItem(localKey, JSON.stringify({ ip: bridgeIP, username, group: selectedGroup }));
+        initMIDI();
+      }
+    };
+
+    function getNextHue() {
+      const salto = Math.random() < 0.45;
+      if (salto) {
+        return Math.floor(Math.random() * 65535);
+      } else {
+        const step = 2000 + Math.random() * 2000;
+        return Math.round((lastHue + step) % 65535);
+      }
+    }
+
+    async function sendHueCommand(hueValue) {
+      if (!bridgeIP || !username || !selectedGroup) return;
+      try {
+        await fetch(`http://${bridgeIP}/api/${username}/groups/${selectedGroup}/action`, {
+          method: "PUT",
+          body: JSON.stringify({
+            hue: hueValue,
+            sat: 254,
+            bri: 254,
+            transitiontime: transitionMs
+          })
+        });
+      } catch (e) {
+        console.error("❌ Error al enviar comando:", e);
+      }
+    }
+
+    function initMIDI() {
+      navigator.requestMIDIAccess().then(
+        (access) => {
+          statusEl.textContent = "🎶 MIDI conectado. Pisa el pedal para cambiar color.";
+          for (const input of access.inputs.values()) {
+            input.onmidimessage = handleMIDIMessage;
+          }
+        },
+        () => {
+          statusEl.textContent = "❌ Error al acceder a MIDI.";
+        }
+      );
+    }
+
+    function handleMIDIMessage({ data }) {
+      const [status, data1, data2] = data;
+      const now = Date.now();
+
+      if (status === 0xB0 && data1 === 64 && now - lastPedalTrigger >= cooldownMs) {
+        lastHue = getNextHue();
+        sendHueCommand(lastHue);
+        lastPedalTrigger = now;
+        const estado = data2 > 0 ? "ON" : "OFF";
+        statusEl.textContent = `🦶 Pedal ${estado} → Hue: ${lastHue}`;
+      }
+    }
+  </script>
+</body>
+</html>
