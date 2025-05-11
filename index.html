@@ -2,13 +2,17 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>Hue Piano Lights - Selección de grupo</title>
+  <title>Hue Piano Lights - Configuración manual</title>
 </head>
 <body>
   <h2>🎹 Hue Lights + Piano Pedal</h2>
-  <p id="status">Buscando el Hue Bridge...</p>
-  <button id="register" disabled>Pulsa el botón del bridge y haz clic aquí</button>
+  <p id="status">Introduce la IP del bridge y pulsa el botón del bridge físico.</p>
+
+  <label for="bridgeIP">IP del Hue Bridge:</label>
+  <input type="text" id="bridgeIP" placeholder="192.168.x.x" />
+  <button id="register">Conectar y registrar usuario</button>
   <br /><br />
+
   <label for="groupSelect">Selecciona una zona de luces:</label>
   <select id="groupSelect" disabled></select>
 
@@ -26,6 +30,7 @@
     const statusEl = document.getElementById("status");
     const buttonEl = document.getElementById("register");
     const groupSelect = document.getElementById("groupSelect");
+    const bridgeInput = document.getElementById("bridgeIP");
 
     const saved = localStorage.getItem(localKey);
     if (saved) {
@@ -33,25 +38,17 @@
       bridgeIP = data.ip;
       username = data.username;
       selectedGroup = data.group;
+      bridgeInput.value = bridgeIP;
       loadGroups();
-    } else {
-      fetch("https://discovery.meethue.com/")
-        .then(res => res.json())
-        .then(data => {
-          if (data.length > 0) {
-            bridgeIP = data[0].internalipaddress;
-            statusEl.textContent = `Bridge detectado en ${bridgeIP}. Pulsa el botón del bridge y luego este botón.`;
-            buttonEl.disabled = false;
-          } else {
-            statusEl.textContent = "❌ No se encontró ningún Hue Bridge.";
-          }
-        })
-        .catch(() => {
-          statusEl.textContent = "❌ Error buscando el bridge.";
-        });
     }
 
     buttonEl.onclick = () => {
+      bridgeIP = bridgeInput.value.trim();
+      if (!bridgeIP) {
+        statusEl.textContent = "❗ Introduce una IP válida.";
+        return;
+      }
+
       fetch(`http://${bridgeIP}/api`, {
         method: "POST",
         body: JSON.stringify({ devicetype: "piano_hue_app" })
